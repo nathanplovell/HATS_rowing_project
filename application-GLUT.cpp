@@ -601,8 +601,10 @@ void updateHaptics(void)
 
             // zero position of the lambda
             cVector3d zeroPos(0, 0, 0); // define target location 
-            cMatrix3d startRot;
-            startRot.identity();
+            cMatrix3d startRot1(0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+            cMatrix3d startRot2(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+            //cMatrix3d startRot;
+            //startRot.identity(); 
 
             // compute spring force 
             cVector3d springForce1 = -K * (position1 - zeroPos) - b * velocity1;
@@ -615,8 +617,8 @@ void updateHaptics(void)
             cVector3d axis2;
             double angle1;
             double angle2;
-            cMatrix3d deltaRotation1 = cTranspose(startRot) * rotation1; // NO transpose! So that it flips
-            cMatrix3d deltaRotation2 = cTranspose(startRot) * rotation2;
+            cMatrix3d deltaRotation1 = cTranspose(startRot1) * rotation1; // NO transpose! So that it flips
+            cMatrix3d deltaRotation2 = cTranspose(startRot2) * rotation2;
             deltaRotation1.toAxisAngle(axis1, angle1);
             deltaRotation2.toAxisAngle(axis2, angle2);
             torque1 = -(rotation1 * ((Kr * angle1) * axis1)) - br * (rotVel1);
@@ -646,8 +648,8 @@ void updateHaptics(void)
         // Unilateral teleoperation 
         if (hapticMode == 3) {
             // rotational spring constants
-            double Kr1 = 2.0;
-            double Kr2 = 2.0;
+            double Kr1 = 10.0; // I was using 2
+            double Kr2 = 10.0;
 
             // derivative spring constants
             double Krd1 = 0.01; // N.m
@@ -666,27 +668,42 @@ void updateHaptics(void)
             force1.add(springForce1);
             force2.add(springForce2);
 
-            // extract roll angles (no negative signs here)
+            // extract roll angles
             double roll1 = atan2(rotation1(2, 1), rotation1(2, 2));
             double roll2 = atan2(rotation2(2, 1), rotation2(2, 2));
+            double pitch1 = atan2(-rotation1(2, 0), sqrt(rotation1(2, 1) * rotation1(2, 1) + rotation1(2, 2) * rotation1(2, 2)));
+            double pitch2 = atan2(-rotation2(2, 0), sqrt(rotation2(2, 1) * rotation2(2, 1) + rotation2(2, 2) * rotation2(2, 2)));
+            // yaw of each device (needed to locate each device's pitch axis)
+            double yaw1 = atan2(rotation1(1, 0), rotation1(0, 0));
+            double yaw2 = atan2(rotation2(1, 0), rotation2(0, 0));
+
+            // current pitch-joint axis of each device, in the base frame
+            cVector3d pitchAxis1(-sin(yaw1), cos(yaw1), 0.0);
+            cVector3d pitchAxis2(-sin(yaw2), cos(yaw2), 0.0);
 
             // mirrored error: zero when roll2 = -roll1
             double rollErr = roll1 + roll2;
+            double pitchErr = pitch2 - pitch1;
             rollErr = atan2(sin(rollErr), cos(rollErr));   // wrap to [-pi, pi]
 
             // mirrored rate error: zero when w2 = -w1
-            double rateErr = rotVel1.x() + rotVel2.x();
+            double rollRateErr = rotVel1.x() + rotVel2.x();
+            double pitchRateErr = rotVel2.dot(pitchAxis2) - rotVel1.dot(pitchAxis1);
 
-            // axial torque on device 2 only
-            torque2 = cVector3d(-Kr2 * rollErr - Krd2 * rateErr, 0.0, 0.0);
+            //// axial torque on device 2 only
+            //torque2 = cVector3d(0.0, -Kr2 * pitchErr - Krd2 * pitchRateErr, 0.0);
+
+            // torque about the follower's own pitch axis
+            double tau = -Kr2 * pitchErr - Krd2 * pitchRateErr;
+            torque2 = tau * pitchAxis2;
 
         }
 
         // Bilateral teleoperation 
         if (hapticMode == 4) {
             // rotational spring constants
-            double Kr1 = 2.0;
-            double Kr2 = 2.0;
+            double Kr1 = 10.0;
+            double Kr2 = 10.0;
 
             // derivative spring constants
             double Krd1 = 0.01; // N.m
@@ -705,18 +722,36 @@ void updateHaptics(void)
             force1.add(springForce1);
             force2.add(springForce2);
 
+            // extract roll angles
             double roll1 = atan2(rotation1(2, 1), rotation1(2, 2));
             double roll2 = atan2(rotation2(2, 1), rotation2(2, 2));
+            double pitch1 = atan2(-rotation1(2, 0), sqrt(rotation1(2, 1) * rotation1(2, 1) + rotation1(2, 2) * rotation1(2, 2)));
+            double pitch2 = atan2(-rotation2(2, 0), sqrt(rotation2(2, 1) * rotation2(2, 1) + rotation2(2, 2) * rotation2(2, 2)));
+            // yaw of each device (needed to locate each device's pitch axis)
+            double yaw1 = atan2(rotation1(1, 0), rotation1(0, 0));
+            double yaw2 = atan2(rotation2(1, 0), rotation2(0, 0));
+
+            // current pitch-joint axis of each device, in the base frame
+            cVector3d pitchAxis1(-sin(yaw1), cos(yaw1), 0.0);
+            cVector3d pitchAxis2(-sin(yaw2), cos(yaw2), 0.0);
 
             // mirrored error: zero when roll2 = -roll1
             double rollErr = roll1 + roll2;
+            double pitchErr = pitch2 - pitch1;
             rollErr = atan2(sin(rollErr), cos(rollErr));   // wrap to [-pi, pi]
 
             // mirrored rate error: zero when w2 = -w1
-            double rateErr = rotVel1.x() + rotVel2.x();
+            double rollRateErr = rotVel1.x() + rotVel2.x();
+            double pitchRateErr = rotVel2.dot(pitchAxis2) - rotVel1.dot(pitchAxis1);
 
-            torque1 = cVector3d(-Kr1 * rollErr - Krd1 * rateErr, 0.0, 0.0);
-            torque2 = cVector3d(-Kr2 * rollErr - Krd2 * rateErr, 0.0, 0.0);
+            //// axial torque on device 2 only
+            //torque2 = cVector3d(0.0, -Kr2 * pitchErr - Krd2 * pitchRateErr, 0.0);
+
+            // torque about the follower's own pitch axis
+            double tau1 = -Kr1 * pitchErr - Krd1 * pitchRateErr;
+            torque1 = -tau1 * pitchAxis1;
+            double tau2 = -Kr2 * pitchErr - Krd2 * pitchRateErr;
+            torque2 = tau2 * pitchAxis2;
 
         }
 
