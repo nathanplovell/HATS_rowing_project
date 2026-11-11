@@ -8,6 +8,8 @@
 //------------------------------------------------------------------------------
 #include "chai3d.h"
 #include <cmath>
+#include <fstream>
+
 //------------------------------------------------------------------------------
 using namespace chai3d;
 using namespace std;
@@ -120,6 +122,24 @@ cVector3d prevPosition(1.0, 0.0, 0.0);
 //// initialize start time 
 //std::chrono::time_point<std::chrono::steady_clock> startTime{};
 
+// structure to hold data points for logging
+struct DataPoint {
+    double time;
+    double flag; // completion flag
+    double rollErr; // error in pitch axis (handle axis)
+    chai3d::cVector3d pos;
+    chai3d::cQuaternion rot; // angular position in quaternion form w, x, y, z
+    chai3d::cVector3d force;
+    chai3d::cVector3d torque;
+};
+
+// list to store all iterations (in memory)
+std::vector<DataPoint> dataLog1;
+std::vector<DataPoint> dataLog2;
+
+chai3d::cPrecisionClock logClock;
+std::ofstream logFile;
+
 // create clock
 cPrecisionClock stopWatch;
 
@@ -145,6 +165,8 @@ void close(void);
 
 // main haptics simulation loop
 void updateHaptics(void);
+
+
 
 
 //==============================================================================
@@ -348,6 +370,22 @@ int main(int argc, char* argv[])
     labelRates->m_fontColor.setWhite();
     camera->m_frontLayer->addChild(labelRates);
 
+    //--------------------------------------------------------------------------
+    // DATA LOGGING
+    //--------------------------------------------------------------------------
+
+    if (recordData) {
+        logFile.open("log.csv", std::ios::out | std::ios::trunc);
+        if (!logFile.is_open())
+        {
+            cout << "Error: could not open log file." << endl;
+            close();
+            return (-1);
+        }
+
+        // header row --- FIX AND UPDATE AS NEEDED !!!!
+        logFile << "UnixTimestamp, RelativeTime (s), PosX, PosY, PosZ, RotW, RotX, RotY, RotZ, ForceX, ForceY, ForceZ, TorqueX, TorqueY, TorqueZ \n";
+    }
 
     //--------------------------------------------------------------------------
     // START SIMULATION
@@ -433,25 +471,6 @@ void keySelect(unsigned char key, int x, int y)
         hapticMode = 4;
     }
 
-    //if (key == '5')
-    //{
-    //    hapticMode = 5;
-    //}
-
-    //if (key == '6')
-    //{
-    //    hapticMode = 6;
-    //}
-
-    //if (key == '7')
-    //{
-    //    hapticMode = 7;
-    //}
-
-    //if (key == '8')
-    //{
-    //    hapticMode = 8;
-    //}
 }
 
 //------------------------------------------------------------------------------
@@ -463,6 +482,13 @@ void close(void)
 
     // wait for graphics and haptics loops to terminate
     while (!simulationFinished) { cSleepMs(100); }
+
+    // close the log file
+    if (logFile.is_open())
+    {
+        logFile.flush();
+        logFile.close();
+    }
 
     // close haptic device
     for (int i = 0; i < numHapticDevices; i++)
@@ -527,6 +553,50 @@ void updateGraphics(void)
 
     // signal frequency counter
     freqCounterGraphics.signal(1);
+
+    // Log data at same rate as updateGraphics
+    if (recordData) {
+        // get current time since logClock started
+        double currentTime = logClock.getCurrentTimeSeconds();
+
+        // Record positions, forces, torques, rotation, roll error
+        std::array<DataPoint, 2> combinedDataLog
+        DataPoint entry;
+
+        // Store rotation matrices
+        std::array<cMatrix3d, 2> rotations; 
+
+        // Loop through both DataPoint records for each haptic device
+        for (int i = 0, i < 2, i++) {
+            combinedDataLog[i].time = currentTime;
+            combinedDatalog[i].flag = completionMarker;
+            hapticDevice[i]->getPosition(combinedDataLog[i].pos);
+            hapticDevice[i]->getForce(combinedDataLog[i].force);
+            hapticDevice[i]->getTorque(combinedDataLog[i].torque);
+            hapticDevice[i]->getRotation(rotations[i]);
+            combinedDataLog[i].rot.fromRotMat(rotations[i]);
+        }
+
+        // Calculate pitch error using same math as force command
+        
+        // Extract roll angles (no negative signs here)
+        double roll1 = atan2(rotations[0](2, 1), rotations[0](2, 2));
+        double roll2 = atan2(rotations[1](2, 1), rotations[1](2, 2));
+
+        // Mirrored error: zero when roll2 = -roll1
+        double rollErr = roll1 + roll2;
+        rollErr = atan2(sin(rollErr), cos(rollErr));   // wrap to [-pi, pi]
+
+        // Append to both datalogs for clarity
+        combinedDataLog[0].rollErr = rollErr
+        combinedDataLog[1].rollErr = rollErr
+
+        // Rows from combinedDataLog to the main data arrays holding all iterations
+        dataLog1.push_back(combinedDataLog[0]);
+        dataLog2.push_back(combinedDataLog[1]);
+
+    } 
+
 }
 
 //------------------------------------------------------------------------------
